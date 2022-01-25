@@ -24,12 +24,10 @@ def main():
     parser.add_argument('--obs_length', type=int, default=8,
                         help='Observed length of the trajectory')
     # Predicted length of the trajectory parameter
-    parser.add_argument('--pred_length', type=int, default=12,
+    parser.add_argument('--pred_length', type=int, default=8,
                         help='Predicted length of the trajectory')
-    
-    
     # Model to be loaded
-    parser.add_argument('--epoch', type=int, default=30,
+    parser.add_argument('--epoch', type=int, default=40,
                         help='Epoch of model to be loaded')
     # cuda support
     parser.add_argument('--use_cuda', action="store_true", default=True,
@@ -38,14 +36,14 @@ def main():
     parser.add_argument('--drive', action="store_true", default=False,
                         help='Use Google drive or not')
     # number of iteration -> we are trying many times to get lowest test error derived from observed part and prediction of observed
-    # part.Currently it is useless because we are using direct copy of observed part and no use of prediction.Test error will be 0.
+    # part.
     parser.add_argument('--iteration', type=int, default=1,
                         help='Number of iteration to create test file (smallest test errror will be selected)')
     # gru model
     parser.add_argument('--gru', action="store_true", default=False,
                         help='True : GRU cell, False: LSTM cell')
     # method selection
-    parser.add_argument('--method', type=int, default=1,
+    parser.add_argument('--method', type=int, default=3,
                         help='Method of lstm will be used (1 = social lstm, 2 = obstacle lstm, 3 = vanilla lstm)')
     
     # Parse the parameters
@@ -90,8 +88,6 @@ def main():
     create_directories(os.path.join(result_directory, model_name), [])
     create_directories(plot_directory, [plot_test_file_directory])
     dataloader.reset_batch_pointer()
-
-
 
     
     dataset_pointer_ins = dataloader.dataset_pointer
@@ -140,19 +136,16 @@ def main():
 
             # Get the sequence
             x_seq, d_seq ,numPedsList_seq, PedsList_seq, target_id = x[0], d[0], numPedsList[0], PedsList[0], target_ids[0]
-            if len(x_seq) < sample_args.obs_length + sample_args.pred_length:
+            x_seq_length = len(x_seq)
+            if x_seq_length < sample_args.obs_length + sample_args.pred_length:
                 continue
+
+            # 把test部分的多轨迹进行clean，直保留预测目标的id
             dataloader.clean_test_data(x_seq, target_id, sample_args.obs_length, sample_args.pred_length)
             dataloader.clean_ped_list(x_seq, PedsList_seq, target_id, sample_args.obs_length, sample_args.pred_length)
-
-            
-            #get processing file name and then get dimensions of file
-            #folder_name = dataloader.get_directory_name_with_pointer(d_seq)
-            #dataset_data = dataloader.get_dataset_dimension(folder_name)
             
             #dense vector creation
             x_seq, lookup_seq = dataloader.convert_proper_array(x_seq, numPedsList_seq, PedsList_seq)
-            
             
             #will be used for error calculation
             orig_x_seq = x_seq.clone() 
@@ -171,18 +164,6 @@ def main():
             #vectorize datapoints
             x_seq, first_values_dict = vectorize_seq(x_seq, PedsList_seq, lookup_seq)
 
-            # Normalization
-            x_max, x_min = x_seq.max(), x_seq.min()
-            x_seq = (x_seq - x_min) / (x_max - x_min)
-
-            # <------------- Experimental block ---------------->
-            # x_seq = translate(x_seq, PedsList_seq, lookup_seq ,target_id_values)
-            # angle = angle_between(reference_point, (x_seq[1][lookup_seq[target_id], 0].data.numpy(), x_seq[1][lookup_seq[target_id], 1].data.numpy()))
-            # x_seq = rotate_traj_with_target_ped(x_seq, angle, PedsList_seq, lookup_seq)
-            # grid_seq = getSequenceGridMask(x_seq[:sample_args.obs_length], dataset_data, PedsList_seq, saved_args.neighborhood_size, saved_args.grid_size, sample_args.use_cuda)
-            # x_seq, first_values_dict = vectorize_seq(x_seq, PedsList_seq, lookup_seq)
-
-
             # The sample function
             if sample_args.method == 3: #vanilla lstm
                 # Extract the observed part of the trajectories
@@ -194,30 +175,25 @@ def main():
                 obs_traj, obs_PedsList_seq, obs_grid = x_seq[:sample_args.obs_length], PedsList_seq[:sample_args.obs_length], grid_seq[:sample_args.obs_length]
                 ret_x_seq = sample(obs_traj, obs_PedsList_seq, sample_args, net, x_seq, PedsList_seq, saved_args, dataloader, lookup_seq, numPedsList_seq, sample_args.gru, obs_grid)
             
-            # Denormalization
-            ret_x_seq = x_min + (x_max - x_min) * ret_x_seq
-            
-            #revert the points back to original space
+            # denormalization
+            #ret_x_seq = (x_max - x_min) * ret_x_seq + x_min
+
             ret_x_seq = revert_seq(ret_x_seq, PedsList_seq, lookup_seq, first_values_dict)
-            
-            # <--------------------- Experimental inverse block ---------------------->
-            # ret_x_seq = revert_seq(ret_x_seq, PedsList_seq, lookup_seq, target_id_values, first_values_dict)
-            # ret_x_seq = rotate_traj_with_target_ped(ret_x_seq, -angle, PedsList_seq, lookup_seq)
-            # ret_x_seq = translate(ret_x_seq, PedsList_seq, lookup_seq ,-target_id_values)
-            
+
             # Record the mean and final displacement error
-            total_error += get_mean_error(ret_x_seq[1:sample_args.obs_length].data, orig_x_seq[1:sample_args.obs_length].data, PedsList_seq[1:sample_args.obs_length], PedsList_seq[1:sample_args.obs_length], sample_args.use_cuda, lookup_seq)
-            final_error += get_final_error(ret_x_seq[1:sample_args.obs_length].data, orig_x_seq[1:sample_args.obs_length].data, PedsList_seq[1:sample_args.obs_length], PedsList_seq[1:sample_args.obs_length], lookup_seq)
+            err = get_mean_error(ret_x_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length].data, orig_x_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length].data, PedsList_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length], PedsList_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length], sample_args.use_cuda, lookup_seq)
+            f_err = get_final_error(ret_x_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length].data, orig_x_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length].data, PedsList_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length], PedsList_seq[sample_args.obs_length : sample_args.obs_length+sample_args.pred_length], lookup_seq)
+
 
             
             end = time.time()
 
-            print('Current file : ', dataloader.get_file_name(0),' Processed trajectory number : ', batch+1, 'out of', dataloader.num_batches, 'trajectories in time', end - start)
+            print('Current file : ', dataloader.get_file_name(0),' Processed trajectory number : ', batch+1, 'out of', dataloader.num_batches, 'trajectories ', 'mean error ', err, ' final error ', f_err, ' time ' ,end - start, '')
 
 
 
-            if dataset_pointer_ins is not dataloader.dataset_pointer:
-                if dataloader.dataset_pointer is not 0:
+            if dataset_pointer_ins != dataloader.dataset_pointer:
+                if dataloader.dataset_pointer != 0:
                     iteration_submission.append(submission)
                     iteration_result.append(results)
 
@@ -225,9 +201,9 @@ def main():
                 submission = []
                 results = []
 
-            
+            # TODO submission_preprocess目前为修改，存在一定问题，目前result里的输出有问题
             submission.append(submission_preprocess(dataloader, ret_x_seq.data.cpu()[sample_args.obs_length:, lookup_seq[target_id], :].numpy(), sample_args.pred_length, sample_args.obs_length, target_id))
-            results.append((x_seq.data.cpu().numpy(), ret_x_seq.data.cpu().numpy(), PedsList_seq, lookup_seq , dataloader.get_frame_sequence(seq_length), target_id, sample_args.obs_length))
+            results.append((orig_x_seq.data.cpu().numpy(), ret_x_seq.data.cpu().numpy(), PedsList_seq, lookup_seq , dataloader.get_frame_sequence(x_seq_length), target_id, sample_args.obs_length))
 
 
         iteration_submission.append(submission)
@@ -300,9 +276,10 @@ def sample(x_seq, Pedlist, args, net, true_x_seq, true_Pedlist, saved_args, data
             # loss_obs = Gaussian2DLikelihood(out_obs, x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]])
 
             # Extract the mean, std and corr of the bivariate Gaussian
-            mux, muy, sx, sy, corr = getCoef(out_obs)
+            #mux, muy, sx, sy, corr = getCoef(out_obs)
             # Sample from the bivariate Gaussian
-            next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, true_Pedlist[tstep], look_up)
+            #next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, true_Pedlist[tstep], look_up)
+            next_x, next_y = out_obs[:, :, 0], out_obs[:, :, 1]
             ret_x_seq[tstep + 1, :, 0] = next_x
             ret_x_seq[tstep + 1, :, 1] = next_y
 
@@ -326,10 +303,10 @@ def sample(x_seq, Pedlist, args, net, true_x_seq, true_Pedlist, saved_args, data
                 outputs, hidden_states, cell_states = net(ret_x_seq[tstep].view(1, numx_seq, 2), [prev_grid], hidden_states, cell_states, [true_Pedlist[tstep]], [num_pedlist[tstep]], dataloader, look_up)
 
             # Extract the mean, std and corr of the bivariate Gaussian
-            mux, muy, sx, sy, corr = getCoef(outputs)
+            #mux, muy, sx, sy, corr = getCoef(outputs)
             # Sample from the bivariate Gaussian
-            next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, true_Pedlist[tstep], look_up)
-
+            #next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, true_Pedlist[tstep], look_up)
+            next_x, next_y = outputs[:, :, 0], outputs[:, :, 1]
             # Store the predicted position
             ret_x_seq[tstep + 1, :, 0] = next_x
             ret_x_seq[tstep + 1, :, 1] = next_y
@@ -357,23 +334,22 @@ def sample(x_seq, Pedlist, args, net, true_x_seq, true_Pedlist, saved_args, data
                 if args.use_cuda:
                     prev_grid = prev_grid.cuda()
 
-        #ret_x_seq[args.obs_length-1] = temp_last_observed
 
         return ret_x_seq
 
 
 def submission_preprocess(dataloader, ret_x_seq, pred_length, obs_length, target_id):
-    seq_lenght = pred_length + obs_length
+    seq_length = pred_length + obs_length
 
     #begin and end index of obs. frames in this seq.
-    begin_obs = (dataloader.time_pointer - seq_lenght)
+    begin_obs = (dataloader.time_pointer - seq_length)
     end_obs = (dataloader.time_pointer - pred_length)
 
     # get original data for frame number and ped ids
     observed_data = dataloader.orig_data[dataloader.dataset_pointer][begin_obs:end_obs, :]
     frame_number_predicted = dataloader.get_frame_sequence(pred_length)
     ret_x_seq_c = ret_x_seq.copy()
-    ret_x_seq_c[:,[0,1]] = ret_x_seq_c[:,[1,0]] # x, y -> y, x
+    #ret_x_seq_c[:,[0,1]] = ret_x_seq_c[:,[1,0]] # x, y -> y, x
     repeated_id = np.repeat(target_id, pred_length) # add id
     id_integrated_prediction = np.append(repeated_id[:, None], ret_x_seq_c, axis=1)
     frame_integrated_prediction = np.append(frame_number_predicted[:, None], id_integrated_prediction, axis=1) #add frame number

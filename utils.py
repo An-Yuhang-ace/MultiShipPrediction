@@ -40,7 +40,7 @@ class DataLoader():
 
         # check validation dataset availibility and clip the reuqested number if it is bigger than available validation dataset
         if self.additional_validation:
-            if len(self.validation_dataset) is 0:
+            if len(self.validation_dataset) == 0:
                 print("There is no validation dataset.Aborted.")
                 self.additional_validation = False
             else:
@@ -197,6 +197,8 @@ class DataLoader():
 
             # convert pandas -> numpy array
             data = np.array(df)
+
+            data[:,2:4] = data[:,2:4]*1000
             # keep original copy of file
             orig_data.append(data)
 
@@ -241,8 +243,8 @@ class DataLoader():
                 # For each ship in the current timeStamp
                 for ship in shipsList:
                     # Extract their lng and lat positions
-                    current_lng = shipsInTimeStamp[3, shipsInTimeStamp[1, :] == ship][0]
-                    current_lat = shipsInTimeStamp[2, shipsInTimeStamp[1, :] == ship][0]
+                    current_lng = shipsInTimeStamp[2, shipsInTimeStamp[1, :] == ship][0]
+                    current_lat = shipsInTimeStamp[3, shipsInTimeStamp[1, :] == ship][0]
 
                     # Add their ship_mmsi, lng, lat to the row of the numpy array
                     shipsWithPos.append([ship, current_lng, current_lat])
@@ -590,10 +592,10 @@ class DataLoader():
 
     def get_file_name(self, offset=0, pointer_type = 'train'):
         #return file name of processing or pointing by dataset pointer
-        if pointer_type is 'train':
+        if pointer_type == 'train':
             return self.data_dirs[self.dataset_pointer+offset].split('/')[-1]
          
-        elif pointer_type is 'valid':
+        elif pointer_type == 'valid':
             return self.data_dirs[self.valid_dataset_pointer+offset].split('/')[-1]
 
 
@@ -628,9 +630,9 @@ class DataLoader():
         # return the number of dataset in the mode
         return len(self.data)
 
-    def clean_test_data(self, x_seq, target_id, obs_lenght, predicted_lenght):
+    def clean_test_data(self, x_seq, target_id, obs_length, predicted_lenght):
         #remove (pedid, x , y) array if x or y is nan for each frame in observed part (for test mode)
-        for frame_num in range(obs_lenght):
+        for frame_num in range(obs_length):
             nan_elements_index = np.where(pd.isna(x_seq[frame_num][:, 2]))
 
             try:
@@ -639,7 +641,7 @@ class DataLoader():
                 print("an error has been occured")
                 pass
 
-        for frame_num in range(obs_lenght, obs_lenght+predicted_lenght):
+        for frame_num in range(obs_length, obs_length+predicted_lenght):
             nan_elements_index = x_seq[frame_num][:, 0] != target_id
 
             try:

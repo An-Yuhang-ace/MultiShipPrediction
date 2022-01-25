@@ -57,10 +57,10 @@ def main():
     parser.add_argument('--embedding_size', type=int, default=64,
                         help='Embedding dimension for the spatial coordinates')
     # Size of neighborhood to be considered parameter
-    parser.add_argument('--neighborhood_size', type=float, default=0.01,
+    parser.add_argument('--neighborhood_size', type=float, default=0.02 * 1000,
                         help='Neighborhood size to be considered for social grid')
     # Size of the social grid parameter
-    parser.add_argument('--grid_size', type=int, default=4,
+    parser.add_argument('--grid_size', type=int, default=6,
                         help='Grid size of the social grid')
     # Maximum number of pedestrians to be considered
     parser.add_argument('--maxNumPeds', type=int, default=27,
@@ -79,10 +79,10 @@ def main():
     parser.add_argument('--drive', action="store_true", default=False,
                         help='Use Google drive or not')
     # number of validation will be used
-    parser.add_argument('--num_validation', type=int, default=2,
+    parser.add_argument('--num_validation', type=int, default=4,
                         help='Total number of validation dataset for validate accuracy')
     # frequency of validation
-    parser.add_argument('--freq_validation', type=int, default=1,
+    parser.add_argument('--freq_validation', type=int, default=2,
                         help='Frequency number(epoch) of validation using validation data')
     # frequency of optimazer learning decay
     parser.add_argument('--freq_optimizer', type=int, default=8,
@@ -197,6 +197,8 @@ def train(args):
             x, y, d, numShipsList, shipsList ,target_mmsis= dataloader.next_batch()
             loss_batch = 0
             
+
+
             # if we are in a new dataset, zero the counter of batch
             if dataset_pointer_ins_grid != dataloader.dataset_pointer and epoch != 0:
                 num_batch = 0
@@ -223,34 +225,11 @@ def train(args):
                 else:
                     grid_seq = getSequenceGridMask(x_seq, shipsList_seq,args.neighborhood_size, args.grid_size, args.use_cuda)
 
+                if args.use_cuda:                    
+                    x_seq = x_seq.cuda()  
+
                 # convert x_seq's absulote pos to relative pos.
                 x_seq, _ = vectorize_seq(x_seq, shipsList_seq, lookup_seq)
-
-                
-                # <---------------------- Experimental block ----------------------->
-                # Main approach:
-                # 1) Translate all trajectories using first frame value of target trajectory so that target trajectory will start (0,0).
-                # 2) Get angle between first trajectory point of target ped and (0, 1) for turning.
-                # 3) Rotate all trajectories in the sequence using this angle.
-                # 4) Calculate grid mask for hidden layer pooling.
-                # 5) Vectorize all trajectories (substract first frame values of each trajectories from subsequent points in the trajectory).
-                #
-                # Problem:
-                #  Low accuracy
-                #
-                # Possible causes:
-                # *Each function has been already checked -> low possibility.
-                # *Logic errors or algorithm errors -> high possibility.
-                # *Wrong order of execution each step -> high possibility.
-                # <------------------------------------------------------------------------>
-
-                if args.use_cuda:                    
-                    x_seq = x_seq.cuda()
-
-                # TODO Normalization
-                x_max, x_min = x_seq.max(), x_seq.min()
-                x_seq = (x_seq - x_min) / (x_max - x_min)
-                
 
                 #number of ships in this sequence per timestamp
                 numNodes = len(lookup_seq)
@@ -271,14 +250,15 @@ def train(args):
                 outputs, _, _ = net(x_seq[:-1], grid_seq[:-1], hidden_states, cell_states, shipsList_seq[:-1], numShipsList_seq[:-1], dataloader, lookup_seq)
 
                 # Compute loss
-                loss = Gaussian2DLikelihood(outputs, x_seq[1:], shipsList_seq[1:], lookup_seq)
+                # loss = Gaussian2DLikelihood(outputs, x_seq[1:], shipsList_seq[1:], lookup_seq)
+                loss = RMSELoss(outputs[:,:,:2], x_seq[1:], shipsList_seq[1:], lookup_seq)
+
                 if loss == 0:
                     continue
                 if args.use_cuda:
                     loss = loss.cuda()
                 loss_batch += loss.item()
                 
-
                 # Compute gradients
                 loss.backward()
 
@@ -293,7 +273,7 @@ def train(args):
             loss_epoch += loss_batch
             num_batch+=1
 
-            print('{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}'.format(epoch * dataloader.num_batches + batch,
+            print('{}/{} (epoch {}), train_loss = {:f}, time/batch = {:f}'.format(epoch * dataloader.num_batches + batch,
                                                                                     args.num_epochs * dataloader.num_batches,
                                                                                     epoch,
                                                                                     loss_batch, end - start))
@@ -326,6 +306,7 @@ def train(args):
 
             # For each batch
             for batch in range(dataloader.num_batches):
+                start = time.time()
                 # Get batch data
                 x, y, d , numShipsList, shipsList ,target_mmsis = dataloader.next_batch()
 
@@ -367,61 +348,30 @@ def train(args):
                     #vectorize datapoints
                     x_seq, first_values_dict = vectorize_seq(x_seq, shipsList_seq, lookup_seq)
 
-                    # TODO Normalization
-                    x_max, x_min = x_seq.max(), x_seq.min()
-                    x_seq = (x_seq - x_min) / (x_max - x_min)
-
-
-                    # <---------------------- Experimental block ----------------------->
-                    # x_seq = translate(x_seq, shipsList_seq, lookup_seq ,target_mmsi_values)
-                    # angle = angle_between(reference_point, (x_seq[1][lookup_seq[target_mmsi], 0].data.numpy(), x_seq[1][lookup_seq[target_mmsi], 1].data.numpy()))
-                    # x_seq = rotate_traj_with_target_ped(x_seq, angle, shipsList_seq, lookup_seq)
-                    # grid_seq = getSequenceGridMask(x_seq, dataset_data, shipsList_seq, args.neighborhood_size, args.grid_size, args.use_cuda)
-                    # x_seq, first_values_dict = vectorize_seq(x_seq, shipsList_seq, lookup_seq)
-
                     #sample predicted points from model
                     ret_x_seq, loss = sample_validation_data(x_seq, shipsList_seq, grid_seq, args, net, lookup_seq, numShipsList_seq, dataloader)
-
-                    # Denormalization
-                    ret_x_seq = x_min + (x_max - x_min) * ret_x_seq
+                    
+                    if loss == 0:
+                        continue
 
                     # Relative coordinates 
                     # revert the points back to original space
                     ret_x_seq = revert_seq(ret_x_seq, shipsList_seq, lookup_seq, first_values_dict)
 
-                    # <---------------------- Experimental block revert----------------------->
-                    # Revert the calculated coordinates back to original space:
-                    # 1) Convert point from vectors to absolute coordinates
-                    # 2) Rotate all trajectories in reverse angle
-                    # 3) Translate all trajectories back to original space by adding the first frame value of target ped trajectory
-                    
-                    # *It works without problems which mean that it reverts a trajectory back completely
-                    
-                    # Possible problems:
-                    # *Algoritmical errors caused by first experimental block -> High possiblity
-                    # <------------------------------------------------------------------------>
-
-                    # ret_x_seq = revert_seq(ret_x_seq, shipsList_seq, lookup_seq, first_values_dict)
-
-                    # ret_x_seq = rotate_traj_with_target_ped(ret_x_seq, -angle, shipsList_seq, lookup_seq)
-
-                    # ret_x_seq = translate(ret_x_seq, shipsList_seq, lookup_seq ,-target_mmsi_values)
-
-                    #get mean and final error
                     err = get_mean_error(ret_x_seq.data, orig_x_seq.data, shipsList_seq, shipsList_seq, args.use_cuda, lookup_seq)
                     f_err = get_final_error(ret_x_seq.data, orig_x_seq.data, shipsList_seq, shipsList_seq, lookup_seq)
                     
-                    if loss != 0:
-                        loss_batch += loss.item()
+                    loss_batch += loss.item()
 
                     err_batch += err
                     f_err_batch += f_err
-                    print('Current file : ', dataloader.get_file_name(0),' Batch : ', batch+1, ' Sequence: ', sequence+1, ' Sequence mean error: ', err,' Sequence final error: ',f_err,' time: ', end - start)
                     results.append((orig_x_seq.data.cpu().numpy(), ret_x_seq.data.cpu().numpy(), shipsList_seq, lookup_seq, dataloader.get_frame_sequence(args.seq_length), target_mmsi))
 
+                end = time.time()
                 loss_batch = loss_batch / dataloader.batch_size
                 err_batch = err_batch / dataloader.batch_size
                 f_err_batch = f_err_batch / dataloader.batch_size
+                print('Current file : ', dataloader.get_file_name(0),' Batch : ', batch+1, ' mean error: ', err_batch ,' final error: ',f_err_batch ,' time: ', end - start)
                 num_of_batch += 1
                 loss_epoch += loss_batch
                 err_epoch += err_batch
@@ -437,8 +387,6 @@ def train(args):
                 f_err_epoch = f_err_epoch / dataloader.num_batches
                 avarage_err = (err_epoch + f_err_epoch)/2
 
-
-
                 # Update best validation loss until now
                 if loss_epoch < best_val_data_loss:
                     best_val_data_loss = loss_epoch
@@ -448,7 +396,7 @@ def train(args):
                     smallest_err_val_data = avarage_err
                     best_err_epoch_val_data = epoch
 
-                print('(epoch {}), valid_loss = {:.3f}, valid_mean_err = {:.3f}, valid_final_err = {:.3f}'.format(epoch, loss_epoch, err_epoch, f_err_epoch))
+                print('(epoch {}), valid_loss = {:f}, valid_mean_err = {:f}, valid_final_err = {:f}'.format(epoch, loss_epoch, err_epoch, f_err_epoch))
                 print('Best epoch', best_epoch_val_data, 'Best validation loss', best_val_data_loss, 'Best error epoch',best_err_epoch_val_data, 'Best error', smallest_err_val_data)
                 log_file_curve.write("Validation dataset epoch: "+str(epoch)+" loss: "+str(loss_epoch)+" mean_err: "+str(err_epoch)+'final_err: '+str(f_err_epoch)+'\n')
                 # Writer to tensorboard

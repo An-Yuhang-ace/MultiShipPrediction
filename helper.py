@@ -230,6 +230,9 @@ def sample_validation_data(x_seq, Pedlist, grid, args, net, look_up, num_pedlist
 
         ret_x_seq[0] = x_seq[0]
 
+        if seq_length <= 1:
+            return ret_x_seq, total_loss
+
         # For the observed part of the trajectory
         for tstep in range(seq_length - 1):
             loss = 0
@@ -238,15 +241,16 @@ def sample_validation_data(x_seq, Pedlist, grid, args, net, look_up, num_pedlist
             # loss_obs = Gaussian2DLikelihood(out_obs, x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]])
 
             # Extract the mean, std and corr of the bivariate Gaussian
-            mux, muy, sx, sy, corr = getCoef(out_)
+            # mux, muy, sx, sy, corr = getCoef(out_)
             # Sample from the bivariate Gaussian
-            next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, Pedlist[tstep], look_up)
+            next_x, next_y = out_[:, :, 0], out_[:, :, 1]
             ret_x_seq[tstep + 1, :, 0] = next_x
             ret_x_seq[tstep + 1, :, 1] = next_y
-            loss = Gaussian2DLikelihood(out_[0].view(1, out_.size()[1], out_.size()[2]), x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]], look_up)
+            #loss = Gaussian2DLikelihood(out_[0].view(1, out_.size()[1], out_.size()[2]), x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]], look_up)
+            loss = RMSELoss(out_[0,:,:2].view(1, out_.size()[1], 2), x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]], look_up)
             total_loss += loss
 
-    return ret_x_seq, total_loss / seq_length
+    return ret_x_seq, total_loss / (seq_length-1)
 
 
 def sample_validation_data_vanilla(x_seq, Pedlist, args, net, look_up, num_pedlist, dataloader):
@@ -279,13 +283,16 @@ def sample_validation_data_vanilla(x_seq, Pedlist, args, net, look_up, num_pedli
             cell_states = None
 
         seq_length = x_seq.shape[0]
-        ret_x_seq = Variable(torch.zeros(seq_length, numx_seq, 2), volatile=True)
+        ret_x_seq = Variable(torch.zeros(seq_length, numx_seq, 2))
 
         # Initialize the return data structure
         if args.use_cuda:
             ret_x_seq = ret_x_seq.cuda()
 
         ret_x_seq[0] = x_seq[0]
+        
+        if seq_length <= 1:
+            return ret_x_seq, total_loss
 
         # For the observed part of the trajectory
         for tstep in range(seq_length -1):
@@ -295,15 +302,17 @@ def sample_validation_data_vanilla(x_seq, Pedlist, args, net, look_up, num_pedli
             # loss_obs = Gaussian2DLikelihood(out_obs, x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]])
 
             # Extract the mean, std and corr of the bivariate Gaussian
-            mux, muy, sx, sy, corr = getCoef(out_)
+            #mux, muy, sx, sy, corr = getCoef(out_)
             # Sample from the bivariate Gaussian
-            next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, Pedlist[tstep], look_up)
+            #next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, Pedlist[tstep], look_up)
+            next_x, next_y = out_[:, :, 0], out_[:, :, 1]
             ret_x_seq[tstep + 1, :, 0] = next_x
             ret_x_seq[tstep + 1, :, 1] = next_y
-            loss = Gaussian2DLikelihood(out_[0].view(1, out_.size()[1], out_.size()[2]), x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]], look_up)
+            #loss = Gaussian2DLikelihood(out_[0].view(1, out_.size()[1], out_.size()[2]), x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]], look_up)
+            loss = RMSELoss(out_[0,:,:2].view(1, out_.size()[1], 2), x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]], look_up)
             total_loss += loss
-        
-    return ret_x_seq, total_loss / seq_length
+            
+    return ret_x_seq, total_loss / (seq_length-1)
 
 def convert_proper_array(x_seq, num_pedlist, pedlist):
     '''

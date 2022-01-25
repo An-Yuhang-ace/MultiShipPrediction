@@ -68,7 +68,6 @@ def Gaussian2DLikelihood(outputs, targets, nodesPresent, look_up):
     assumedNodesPresent : Nodes assumed to be present in each frame in the sequence
     nodesPresent : True nodes present in each frame in the sequence
     look_up : lookup table for determining which ped is in which array index
-
     '''
     seq_length = outputs.size()[0]
     # Extract mean, std devs and correlation
@@ -112,3 +111,33 @@ def Gaussian2DLikelihood(outputs, targets, nodesPresent, look_up):
         return loss / counter
     else:
         return loss
+
+
+def RMSELoss(outputs, targets, nodesPresent, look_up):
+    '''
+    params:
+    outputs : predicted locations
+    targets : true locations
+    assumedNodesPresent : Nodes assumed to be present in each frame in the sequence
+    nodesPresent : True nodes present in each frame in the sequence
+    look_up : lookup table for determining which ped is in which array index
+    '''
+    seq_length = outputs.size()[0]
+    
+    loss_fn = torch.nn.MSELoss()
+    #loss_0 = loss_fn(outputs, targets)
+
+    loss = 0
+
+    for framenum in range(seq_length):
+        nodeIDs = nodesPresent[framenum]
+        #nodeIDs = [str(nodeID) for nodeID in nodeIDs]
+        nodeIDs = [look_up[nodeID] for nodeID in nodeIDs]
+        nodeIDs_tensor = torch.tensor(nodeIDs).cuda()
+
+        output = torch.index_select(outputs[framenum], 0, nodeIDs_tensor)
+        target = torch.index_select(targets[framenum], 0, nodeIDs_tensor)
+        loss += torch.sqrt(loss_fn(output, target))
+    if seq_length == 0:
+        return loss
+    return loss / seq_length
