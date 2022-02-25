@@ -28,8 +28,8 @@ Social-LSTM model implementation, Vanilla-LSTM model implementation and related 
 |  Model  | Neighbor Size | Mean Error| Final Error|
 |  :---:  | :-----------: | :-------: | :----: |
 | Vanilla-LSTM | 0 |  0.6430 | 2.0371 |
-| Social-LSTM |0.021| 0.6323 | 2.0572 |
-| Social-LSTM |0.020| 0.6363 | 1.9084 |
+| Social-LSTM |0.021| **0.6323** | 2.0572 |
+| Social-LSTM |0.020| 0.6363 | **1.9084** |
 | Social-LSTM |0.019| 0.6422 | 2.0148 |  
   
 Subjective display of predicted trajectories  
