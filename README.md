@@ -33,5 +33,4 @@ Social-LSTM model implementation, Vanilla-LSTM model implementation and related 
 | Social-LSTM |0.019| 0.6422 | 2.0148 |  
   
 Subjective display of predicted effect  
-
-![image](\plot\图片1.png)
+![图片1](https://user-images.githubusercontent.com/34471199/155717370-83821f83-bea9-403d-a4f2-227eafdf3cac.png)
