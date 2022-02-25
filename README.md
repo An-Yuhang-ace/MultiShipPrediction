@@ -34,4 +34,4 @@ Social-LSTM model implementation, Vanilla-LSTM model implementation and related 
   
 Subjective display of predicted effect  
 
-![image](plot\图片1.png)
+![image](\plot\图片1.png)
